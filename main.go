@@ -87,9 +87,7 @@ func main() {
 				}
 				continue
 			case <-requestCtx.Done():
-				fmt.Println("-- sse request canceled")
 			case <-serverCtx.Done():
-				fmt.Println("-- server canceled")
 			}
 			break
 		}
@@ -113,7 +111,6 @@ func main() {
 		}
 
 		fmt.Fprintln(w, string(b))
-		fmt.Println("sent data for", len(reqs), "request(s)")
 	})
 
 	mux.HandleFunc("/clear", func(w http.ResponseWriter, _ *http.Request) {
@@ -158,8 +155,6 @@ func main() {
 			panic(errEx)
 		}
 		req.Id = int(id)
-
-		fmt.Println("req: ", req.Method, req.URL)
 		update()
 	})
 
