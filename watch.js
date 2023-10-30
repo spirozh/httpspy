@@ -1,6 +1,8 @@
 
 const evtSource = new EventSource("/SSEUpdate");
 
+let qurl = "";
+
 evtSource.onmessage = (event) => {
     refreshRequests();
 }
@@ -13,7 +15,14 @@ function changeTable(requestsBody) {
     const cols = ['Id', 'Timestamp', 'Method', 'URL', 'Body'];
 
     var tr = $(`<tr></tr>`);
-    cols.forEach(col => { tr.append($(`<th>${col}</th>`)); });
+    cols.forEach(col => {
+        const th = $(`<th>${col}</th>`);
+        if (col === 'URL') {
+            th.on('click', () => { qurl = ""; refreshRequests(); })
+            th.attr('class', (i, v) => `${v} clickable`);
+        }
+        tr.append(th);
+    });
     fragment.append(tr);
 
     if (!requests) {
@@ -45,6 +54,9 @@ function renderCell(request, col) {
                 td.append($(`<span class="tt">${k}<span class="ttt">${v}</span></span> `));
             });
             break;
+        case 'URL':
+            td.on('click', () => { qurl = request[col]; refreshRequests() });
+            td.attr('class', (i, v) => `${v} clickable`);
         default:
             td.append(request[col])
     }
@@ -53,7 +65,7 @@ function renderCell(request, col) {
 }
 
 function refreshRequests() {
-    $.get("requests", changeTable)
+    $.get('/requests?url=' + encodeURIComponent(qurl), changeTable);
 }
 
 $("button#clear").click(() => {
