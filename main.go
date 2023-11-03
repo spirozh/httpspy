@@ -186,7 +186,11 @@ func main() {
 		Handler:     mux,
 		BaseContext: func(_ net.Listener) context.Context { return serverCtx },
 	}
-	go s.ListenAndServe()
+	go func() {
+		err := s.ListenAndServe()
+		fmt.Println(err)
+		serverDone()
+	}()
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
