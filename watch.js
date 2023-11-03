@@ -38,7 +38,6 @@ function changeTable(requestsBody) {
             fragment.append(tr);
         });
 
-
     $('div#requests table').remove();
     $('div#requests').append(fragment);
 }
