@@ -89,18 +89,14 @@ func (db DB) GetRequests(url string) (requests []Request, err error) {
 	return requests, err
 }
 
-// WriteRequest writes a request to the DB, errors are returned on dbErrorChan, the id is returned on the idChan
-func (db DB) WriteRequest(req *Request, dbErrorChan chan<- error, idChan chan<- int64) {
+// WriteRequest writes a request to the DB, returns the id of the new record and any error
+func (db DB) WriteRequest(req Request) (int64, error) {
 	res, err := db.db.Exec(`
 		insert into requests(method, url, headers, body, timestamp) values ($1, $2, $3, $4, $5) returning id
 	`, req.Method, req.URL, req.Headers, req.Body, req.Timestamp)
 	if err != nil {
-		dbErrorChan <- err
-		idChan <- -1
-		return
+		return -1, err
 	}
 
-	id, err := res.LastInsertId()
-	dbErrorChan <- err
-	idChan <- id
+	return res.LastInsertId()
 }
