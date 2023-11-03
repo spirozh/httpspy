@@ -1,3 +1,4 @@
+// Package notification provides a notification channel service
 package notification
 
 import (
@@ -7,18 +8,24 @@ import (
 
 // Token is returned with a notification channel, so that the channel can be closed.
 type Token int
-type nothing struct{}
+
+// Nothing is the empty struct
+type Nothing struct{}
 
 var mu sync.RWMutex
-var tokenMap map[Token]chan nothing
+var tokenMap map[Token]chan Nothing
 
-// Returns a new notification channel and a token that can be used to close it.
-func New() (<-chan nothing, Token) {
+// New returns a new notification channel and a token that can be used to close it.
+func New() (<-chan Nothing, Token) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	ch := make(chan nothing, 1)
-	ch <- nothing{}
+	if tokenMap == nil {
+		tokenMap = map[Token]chan Nothing{}
+	}
+
+	ch := make(chan Nothing, 1)
+	ch <- Nothing{}
 
 	for {
 		tok := Token(rand.Int())
@@ -47,6 +54,6 @@ func Notify() {
 	defer mu.RUnlock()
 
 	for _, ch := range tokenMap {
-		ch <- nothing{}
+		ch <- Nothing{}
 	}
 }
