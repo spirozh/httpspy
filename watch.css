@@ -13,8 +13,10 @@ table {
     text-align: center;
 }
 
-.clickable {
+.clickable * {
     cursor: pointer;
+    text-decoration: underline;
+    color: blue;
 }
 
 .tt {

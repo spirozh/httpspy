@@ -16,11 +16,15 @@ function changeTable(requestsBody) {
 
     var tr = $(`<tr></tr>`);
     cols.forEach(col => {
-        const th = $(`<th>${col}</th>`);
+        let th = $(`<th></th>`);
+        let div = $(`<div>${col}</div>`)
         if (col === 'URL') {
-            th.on('click', () => { qurl = ""; refreshRequests(); })
-            th.attr('class', (i, v) => `${v} clickable`);
+            if (qurl !== '') {
+                th = $(`<th class="clickable"></th>`);
+                th.on('click', () => { qurl = ""; refreshRequests(); });
+            }
         }
+        th.append(div);
         tr.append(th);
     });
     fragment.append(tr);
@@ -41,26 +45,24 @@ function changeTable(requestsBody) {
 
 function renderCell(request, col) {
     let td = $(`<td class="${col}"></td>`);
+    let div = $(`<div></div>`);
 
+    let text = "";
     switch (col) {
         case 'Timestamp':
-            td.append(request[col].replace('T', ' '));
-            break;
-        case 'Headers':
-            var headers = JSON.parse(request[col]);
-            Object.entries(headers).forEach(e => {
-                const [k, v] = e;
-                if (k.startsWith("Sec")) return;
-                td.append($(`<span class="tt">${k}<span class="ttt">${v}</span></span> `));
-            });
+            text = request[col].replace('T', ' ');
             break;
         case 'URL':
-            td.on('click', () => { qurl = request[col]; refreshRequests() });
-            td.attr('class', (i, v) => `${v} clickable`);
+            if (qurl === "") {
+                td.on('click', () => { qurl = request[col]; refreshRequests() });
+                td.attr('class', (i, v) => `${v} clickable`);
+            }
         default:
-            td.append(request[col])
+            text = request[col];
     }
+    div.append(request[col])
 
+    td.append(div);
     return td;
 }
 
