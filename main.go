@@ -152,7 +152,7 @@ func main() {
 	}
 	fmt.Println(len(requests), " request(s) stored.")
 
-	addr := ":6968"
+	addr := ":6969"
 	fmt.Printf("--\naddr: %q\n", addr)
 
 	s := http.Server{
