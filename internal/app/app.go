@@ -1,45 +1,31 @@
-// Package httpspy is the main package for the httpspy application
-package httpspy
+// Package app is ...
+package app
 
 import (
 	"context"
 	"fmt"
 	"net"
 	"net/http"
+
 	"os"
 	"os/signal"
 	"time"
 
-	"www.github.com/spirozh/httpspy/internal/httpspy"
+	handler "www.github.com/spirozh/httpspy/internal/handler"
 )
 
-// App is the core struct
-type App struct {
-	Addr            string
-	updateListeners *httpspy.TokenChanMap
-}
-
-// New creates a new instance of the app
-func New(addr string) App {
-	return App{
-		Addr: addr,
-	}
-}
-
 // Run is the entry to the app
-func (app App) Run() {
+func Run(addr string) {
 	serverCtx, serverDone := context.WithCancel(context.Background())
-
-	db := httpspy.OpenDb()
-	defer db.Close()
+	doneChan := make(chan struct{})
 
 	s := http.Server{
-		Addr:        app.Addr,
-		Handler:     httpspy.ServeMux(serverCtx, db),
+		Addr:        addr,
+		Handler:     handler.New(serverCtx, doneChan),
 		BaseContext: func(_ net.Listener) context.Context { return serverCtx },
 	}
 	go func() {
-		fmt.Printf("--\naddr: %q\n", app.Addr)
+		fmt.Printf("--\naddr: %q\n", addr)
 		err := s.ListenAndServe()
 		fmt.Println(err)
 		serverDone()
@@ -54,7 +40,10 @@ func (app App) Run() {
 	case <-serverCtx.Done():
 	}
 
+	<-doneChan
+
 	ctx, ctxCancel := context.WithTimeout(context.Background(), time.Second)
 	defer ctxCancel()
 	s.Shutdown(ctx)
+
 }

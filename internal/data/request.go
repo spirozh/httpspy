@@ -1,7 +1,7 @@
-package httpspy
+// Package data contains the data types used in the application
+package data
 
 import (
-	"fmt"
 	"time"
 )
 
@@ -13,14 +13,4 @@ type Request struct {
 	URL       string
 	Headers   string
 	Body      string
-}
-
-func (r Request) String() string {
-	return fmt.Sprintf(`
-	id: %d
-	timestamp: %s
-	method url: %s %s,
-	header: %v,
-	body: %q
-	`, r.ID, r.Timestamp, r.Method, r.URL, r.Headers, r.Body)
 }

@@ -1,4 +1,5 @@
-package httpspy
+// Package handler contains all the handlers for this app
+package handler
 
 import (
 	"bytes"
@@ -10,11 +11,13 @@ import (
 	"strings"
 	"time"
 
-	"www.github.com/spirozh/httpspy/internal/httpspy/static"
+	"www.github.com/spirozh/httpspy/internal/data"
+	"www.github.com/spirozh/httpspy/internal/db"
+	"www.github.com/spirozh/httpspy/internal/static"
 )
 
-// ServeMux creates a serveMux that handles all the http requests
-func ServeMux(serverCtx context.Context, db DB) http.Handler {
+// New creates a serveMux that handles all the http requests
+func New(serverCtx context.Context, doneChan chan struct{}) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.Handle("/favicon.ico", staticHandler(static.WatchFavicon, "image/x-icon"))
@@ -22,7 +25,13 @@ func ServeMux(serverCtx context.Context, db DB) http.Handler {
 	mux.Handle("/watch.js", staticHandler(static.WatchJS, "text/javascript"))
 	mux.Handle("/watch.css", staticHandler(static.WatchCSS, "text/css"))
 
-	requests, err := db.GetRequests("")
+	database := db.OpenDb()
+	go func() {
+		<-serverCtx.Done()
+		database.Close()
+		close(doneChan)
+	}()
+	requests, err := database.GetRequests("")
 	if err != nil {
 		panic(err)
 	}
@@ -31,9 +40,9 @@ func ServeMux(serverCtx context.Context, db DB) http.Handler {
 	updateListeners := NewTokenChanMap()
 
 	mux.Handle("/SSEUpdate", sseHandler(serverCtx, updateListeners))
-	mux.Handle("/requests", requestHandler(db))
-	mux.Handle("/clear", clearHandler(db, updateListeners))
-	mux.Handle("/", everythingElseHandler(serverCtx, db, updateListeners))
+	mux.Handle("/requests", requestHandler(database))
+	mux.Handle("/clear", clearHandler(database, updateListeners))
+	mux.Handle("/", everythingElseHandler(serverCtx, database, updateListeners))
 
 	return mux
 }
@@ -48,8 +57,8 @@ func staticHandler(body []byte, contentType string) http.HandlerFunc {
 
 func sseHandler(serverCtx context.Context, updateListeners *TokenChanMap) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tok, updateCh := updateListeners.newToken()
-		defer updateListeners.close(tok)
+		tok, updateCh := updateListeners.New()
+		defer updateListeners.Close(tok)
 
 		// write headers
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -75,7 +84,7 @@ func sseHandler(serverCtx context.Context, updateListeners *TokenChanMap) http.H
 	}
 }
 
-func requestHandler(db DB) http.HandlerFunc {
+func requestHandler(db db.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// show requests
 		reqs, err := db.GetRequests(r.URL.Query().Get("url"))
@@ -86,7 +95,7 @@ func requestHandler(db DB) http.HandlerFunc {
 		}
 
 		if reqs == nil {
-			reqs = []Request{}
+			reqs = []data.Request{}
 		}
 		b, err := json.MarshalIndent(reqs, "", " ")
 		if err != nil {
@@ -99,22 +108,22 @@ func requestHandler(db DB) http.HandlerFunc {
 	}
 }
 
-func clearHandler(db DB, updateListeners *TokenChanMap) http.HandlerFunc {
+func clearHandler(db db.DB, updateListeners *TokenChanMap) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		_, err := db.db.Exec("delete from requests")
+		err := db.DeleteRequests()
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintln(w, err)
 			return
 		}
 
-		updateListeners.notify()
+		go updateListeners.Notify()
 	}
 }
 
-func everythingElseHandler(serverCtx context.Context, db DB, updateListeners *TokenChanMap) http.HandlerFunc {
+func everythingElseHandler(serverCtx context.Context, db db.DB, updateListeners *TokenChanMap) http.HandlerFunc {
 	type requestToRunner struct {
-		req   Request
+		req   data.Request
 		idCh  chan<- int64
 		errCh chan<- error
 	}
@@ -131,7 +140,7 @@ func everythingElseHandler(serverCtx context.Context, db DB, updateListeners *To
 				id, err := db.WriteRequest(req.req)
 				req.idCh <- id
 				req.errCh <- err
-				updateListeners.notify()
+				go updateListeners.Notify()
 			case <-serverCtx.Done():
 				done = true
 			}
@@ -148,7 +157,7 @@ func everythingElseHandler(serverCtx context.Context, db DB, updateListeners *To
 		var body strings.Builder
 		io.Copy(&body, r.Body)
 
-		req := Request{
+		req := data.Request{
 			Timestamp: time.Now().UTC(),
 			Method:    r.Method,
 			URL:       r.URL.String(),

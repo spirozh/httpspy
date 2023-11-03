@@ -1,8 +1,17 @@
-// Package main starts the server
+// Package main provides the command to start the server
 package main
 
-import "www.github.com/spirozh/httpspy"
+import (
+	"os"
+
+	app "www.github.com/spirozh/httpspy/internal/app"
+)
 
 func main() {
-	httpspy.New(":6969").Run()
+	addr, exists := os.LookupEnv("ADDR")
+	if !exists {
+		addr = ":6969"
+	}
+
+	app.Run(addr)
 }

@@ -1,12 +1,15 @@
-package httpspy
+// Package db contains the database access routines for the app
+package db
 
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 
 	// import the sqlite db driver
 	_ "github.com/mattn/go-sqlite3"
+	"www.github.com/spirozh/httpspy/internal/data"
 )
 
 const dbName = "./httpspy.db"
@@ -42,6 +45,7 @@ func (db DB) Close() {
 	if err != nil {
 		panic(err)
 	}
+	fmt.Println("db closed")
 
 	db.db = nil
 }
@@ -69,7 +73,7 @@ func ensureTables(db *sql.DB) {
 }
 
 // GetRequests returns a list of all the requests which have a URL that matches the url parameter
-func (db DB) GetRequests(url string) (requests []Request, err error) {
+func (db DB) GetRequests(url string) (requests []data.Request, err error) {
 	rows, err := db.db.Query(`
 		select id, method, url, headers, body, timestamp from requests where ''=$1 or url=$1 order by timestamp desc
 	`, url)
@@ -79,7 +83,7 @@ func (db DB) GetRequests(url string) (requests []Request, err error) {
 	defer rows.Close()
 
 	for rows.Next() {
-		var r Request
+		var r data.Request
 
 		rowErr := rows.Scan(&r.ID, &r.Method, &r.URL, &r.Headers, &r.Body, &r.Timestamp)
 		err = errors.Join(err, rowErr)
@@ -90,7 +94,7 @@ func (db DB) GetRequests(url string) (requests []Request, err error) {
 }
 
 // WriteRequest writes a request to the DB, returns the id of the new record and any error
-func (db DB) WriteRequest(req Request) (int64, error) {
+func (db DB) WriteRequest(req data.Request) (int64, error) {
 	res, err := db.db.Exec(`
 		insert into requests(method, url, headers, body, timestamp) values ($1, $2, $3, $4, $5) returning id
 	`, req.Method, req.URL, req.Headers, req.Body, req.Timestamp)
@@ -99,4 +103,10 @@ func (db DB) WriteRequest(req Request) (int64, error) {
 	}
 
 	return res.LastInsertId()
+}
+
+// DeleteRequests deletes all requests from the DB, returns any error
+func (db DB) DeleteRequests() error {
+	_, err := db.db.Exec("delete from requests")
+	return err
 }
