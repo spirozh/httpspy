@@ -22,7 +22,8 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const DB_NAME = "./httpspy.db"
+// DbName is the name of sqlite database file
+const DbName = "./httpspy.db"
 
 //go:embed "watch.html"
 var watchPage []byte
@@ -31,7 +32,7 @@ var watchPage []byte
 var watchJs []byte
 
 //go:embed "watch.css"
-var watchCss []byte
+var watchCSS []byte
 
 func main() {
 	serverCtx, serverDone := context.WithCancel(context.Background())
@@ -40,53 +41,24 @@ func main() {
 	ensureDB()
 
 	// open database
-	db, err := sql.Open("sqlite3", DB_NAME)
+	db, err := sql.Open("sqlite3", DbName)
 	if err != nil {
 		panic(err)
 	}
 	defer db.Close()
 
-	updateChRWMu := sync.RWMutex{}
-	updateChs := map[int]chan struct{}{}
-	update := func() {
-		updateChRWMu.RLock()
-		defer updateChRWMu.RUnlock()
-
-		for _, ch := range updateChs {
-			ch <- struct{}{}
-		}
-	}
+	updateListeners := newTokenChanMap()
 
 	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
 	mux.HandleFunc("/watch", staticHandler(watchPage, "text/html"))
 	mux.HandleFunc("/watch.js", staticHandler(watchJs, "text/javascript"))
-	mux.HandleFunc("/watch.css", staticHandler(watchCss, "text/css"))
+	mux.HandleFunc("/watch.css", staticHandler(watchCSS, "text/css"))
 
 	mux.HandleFunc("/SSEUpdate", func(w http.ResponseWriter, r *http.Request) {
-		updateCh := make(chan struct{}, 1)
-		defer close(updateCh)
-
-		updateCh <- struct{}{}
-
-		// loop to ensure unique id
-		for {
-			id := rand.Int()
-			if _, exists := updateChs[id]; !exists {
-				updateChRWMu.Lock()
-				updateChs[id] = updateCh
-				updateChRWMu.Unlock()
-
-				// when all is said and done, close the
-				defer func() {
-					updateChRWMu.Lock()
-					delete(updateChs, id)
-					updateChRWMu.Unlock()
-				}()
-				break
-			}
-		}
+		tok, updateCh := updateListeners.newToken()
+		defer updateListeners.close(tok)
 
 		// write headers
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -141,19 +113,20 @@ func main() {
 			return
 		}
 
-		update()
+		updateListeners.notify()
 	})
 
 	// request writer (with plenty of room to grow)
 	writeCh := make(chan *Request, 1000)
 
+	// write requests from a single thread (required by sqlite)
 	go func() {
-		done := false
+		var done bool
 		for !done {
 			select {
 			case req := <-writeCh:
 				writeRequest(db, req)
-				update()
+				updateListeners.notify()
 			case <-serverCtx.Done():
 				done = true
 			}
@@ -179,14 +152,17 @@ func main() {
 			idChan:      make(chan int64, 1),
 			dbErrorChan: make(chan error, 1),
 		}
+
+		// write request to db (and get id+errs back on channels)
 		writeCh <- req
+
 		if err := <-req.dbErrorChan; err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintln(w, err)
 			return
 		}
 
-		req.Id = <-req.idChan
+		req.ID = <-req.idChan
 		reqBytes, err := json.MarshalIndent(req, "", "  ")
 		if err != nil {
 			panic(err)
@@ -227,8 +203,8 @@ func main() {
 
 func ensureDB() {
 	// if database doesn't exist, create it
-	if _, err := os.Stat(DB_NAME); os.IsNotExist(err) {
-		db, err := sql.Open("sqlite3", DB_NAME)
+	if _, err := os.Stat(DbName); os.IsNotExist(err) {
+		db, err := sql.Open("sqlite3", DbName)
 		if err != nil {
 			panic(err)
 		}
@@ -263,7 +239,7 @@ func getRequests(db *sql.DB, url string) (requests []Request, err error) {
 	for rows.Next() {
 		var r Request
 
-		rowErr := rows.Scan(&r.Id, &r.Method, &r.URL, &r.Headers, &r.Body, &r.Timestamp)
+		rowErr := rows.Scan(&r.ID, &r.Method, &r.URL, &r.Headers, &r.Body, &r.Timestamp)
 		err = errors.Join(err, rowErr)
 
 		requests = append(requests, r)
@@ -294,13 +270,15 @@ func staticHandler(body []byte, contentType string) http.HandlerFunc {
 	}
 }
 
+// Request contains information about an incoming request, plus two channels for async updates
 type Request struct {
-	Id          int64
-	Timestamp   time.Time
-	Method      string
-	URL         string
-	Headers     string
-	Body        string
+	ID        int64
+	Timestamp time.Time
+	Method    string
+	URL       string
+	Headers   string
+	Body      string
+
 	idChan      chan int64
 	dbErrorChan chan error
 }
@@ -312,5 +290,51 @@ func (r Request) String() string {
 		method url: %s %s,
 		header: %v,
 		body: %q
-	`, r.Id, r.Timestamp, r.Method, r.URL, r.Headers, r.Body)
+	`, r.ID, r.Timestamp, r.Method, r.URL, r.Headers, r.Body)
+}
+
+type token int
+
+type tokenChanMap struct {
+	mu sync.RWMutex
+	m  map[token]chan struct{}
+}
+
+func newTokenChanMap() *tokenChanMap {
+	return &tokenChanMap{
+		m: map[token]chan struct{}{},
+	}
+}
+
+func (m *tokenChanMap) newToken() (token, <-chan struct{}) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	ch := make(chan struct{}, 1)
+	ch <- struct{}{}
+
+	for {
+		tok := token(rand.Int())
+		if _, exists := m.m[tok]; !exists {
+			m.m[tok] = ch
+			return tok, ch
+		}
+	}
+}
+
+func (m *tokenChanMap) close(tok token) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	close(m.m[tok])
+	delete(m.m, tok)
+}
+
+func (m *tokenChanMap) notify() {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for tok := range m.m {
+		m.m[tok] <- struct{}{}
+	}
 }
