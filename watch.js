@@ -59,7 +59,7 @@ function renderCell(request, col) {
         default:
             text = request[col];
     }
-    div.append(request[col])
+    div.append(text)
 
     td.append(div);
     return td;
