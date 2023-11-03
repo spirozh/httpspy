@@ -13,6 +13,7 @@ import (
 
 	"www.github.com/spirozh/httpspy/internal/data"
 	"www.github.com/spirozh/httpspy/internal/db"
+	"www.github.com/spirozh/httpspy/internal/notification"
 	"www.github.com/spirozh/httpspy/internal/static"
 )
 
@@ -37,12 +38,10 @@ func New(serverCtx context.Context, doneChan chan struct{}) http.Handler {
 	}
 	fmt.Println(len(requests), " request(s) stored.")
 
-	updateListeners := NewTokenChanMap()
-
-	mux.Handle("/SSEUpdate", sseHandler(serverCtx, updateListeners))
+	mux.Handle("/SSEUpdate", sseHandler(serverCtx))
 	mux.Handle("/requests", requestHandler(database))
-	mux.Handle("/clear", clearHandler(database, updateListeners))
-	mux.Handle("/", everythingElseHandler(serverCtx, database, updateListeners))
+	mux.Handle("/clear", clearHandler(database))
+	mux.Handle("/", everythingElseHandler(serverCtx, database))
 
 	return mux
 }
@@ -55,10 +54,10 @@ func staticHandler(body []byte, contentType string) http.HandlerFunc {
 	}
 }
 
-func sseHandler(serverCtx context.Context, updateListeners *TokenChanMap) http.HandlerFunc {
+func sseHandler(serverCtx context.Context) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		tok, updateCh := updateListeners.New()
-		defer updateListeners.Close(tok)
+		updateCh, tok := notification.New()
+		defer notification.Close(tok)
 
 		// write headers
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -108,7 +107,7 @@ func requestHandler(db db.DB) http.HandlerFunc {
 	}
 }
 
-func clearHandler(db db.DB, updateListeners *TokenChanMap) http.HandlerFunc {
+func clearHandler(db db.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		err := db.DeleteRequests()
 		if err != nil {
@@ -117,11 +116,11 @@ func clearHandler(db db.DB, updateListeners *TokenChanMap) http.HandlerFunc {
 			return
 		}
 
-		go updateListeners.Notify()
+		go notification.Notify()
 	}
 }
 
-func everythingElseHandler(serverCtx context.Context, db db.DB, updateListeners *TokenChanMap) http.HandlerFunc {
+func everythingElseHandler(serverCtx context.Context, db db.DB) http.HandlerFunc {
 	type requestToRunner struct {
 		req   data.Request
 		idCh  chan<- int64
@@ -140,7 +139,7 @@ func everythingElseHandler(serverCtx context.Context, db db.DB, updateListeners 
 				id, err := db.WriteRequest(req.req)
 				req.idCh <- id
 				req.errCh <- err
-				go updateListeners.Notify()
+				go notification.Notify()
 			case <-serverCtx.Done():
 				done = true
 			}
