@@ -1,5 +1,5 @@
-// Package main is the main package for the httpspy application
-package main
+// Package httpspy is the main package for the httpspy application
+package httpspy
 
 import (
 	"bytes"
@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-func main() {
+func Main() {
 	serverCtx, serverDone := context.WithCancel(context.Background())
 	mux := http.NewServeMux()
 

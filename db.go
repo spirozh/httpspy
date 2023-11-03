@@ -1,4 +1,4 @@
-package main
+package httpspy
 
 import (
 	"database/sql"
