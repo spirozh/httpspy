@@ -9,29 +9,52 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// DbName is the name of sqlite database file
-const DbName = "./httpspy.db"
+const dbName = "./httpspy.db"
 
-func openDb() *sql.DB {
-	db, err := sql.Open("sqlite3", DbName)
+// DB encapsulates the db for the app
+type DB struct {
+	db *sql.DB
+}
+
+// OpenDb gets a database connection and ensures that the tables
+func OpenDb() DB {
+	dbExists := doesDbExist()
+
+	db, err := sql.Open("sqlite3", dbName)
 	if err != nil {
 		panic(err)
 	}
 
-	ensureTables(db)
+	if dbExists {
+		ensureTables(db)
+	}
 
-	return db
+	return DB{db}
+}
+
+// Close closes the database and panics if there is an error.  If the database is already closed, it does nothing
+func (db DB) Close() {
+	if db.db == nil {
+		return
+	}
+
+	err := db.db.Close()
+	if err != nil {
+		panic(err)
+	}
+
+	db.db = nil
 }
 
 func doesDbExist() bool {
-	_, err := os.Stat(DbName)
+	_, err := os.Stat(dbName)
 	return os.IsNotExist(err)
 }
 
 func ensureTables(db *sql.DB) {
 	// create tables
 	_, err := db.Exec(`
-		create table if not exists requests (
+		create table requests (
 			id        integer not null primary key,
 			method    text,
 			url       text,
@@ -45,8 +68,9 @@ func ensureTables(db *sql.DB) {
 	}
 }
 
-func getRequests(db *sql.DB, url string) (requests []Request, err error) {
-	rows, err := db.Query(`
+// GetRequests returns a list of all the requests which have a URL that matches the url parameter
+func (db DB) GetRequests(url string) (requests []Request, err error) {
+	rows, err := db.db.Query(`
 		select id, method, url, headers, body, timestamp from requests where ''=$1 or url=$1 order by timestamp desc
 	`, url)
 	if err != nil {
@@ -65,17 +89,18 @@ func getRequests(db *sql.DB, url string) (requests []Request, err error) {
 	return requests, err
 }
 
-func writeRequest(db *sql.DB, req *Request) {
-	res, err := db.Exec(`
+// WriteRequest writes a request to the DB, errors are returned on dbErrorChan, the id is returned on the idChan
+func (db DB) WriteRequest(req *Request, dbErrorChan chan<- error, idChan chan<- int64) {
+	res, err := db.db.Exec(`
 		insert into requests(method, url, headers, body, timestamp) values ($1, $2, $3, $4, $5) returning id
 	`, req.Method, req.URL, req.Headers, req.Body, req.Timestamp)
 	if err != nil {
-		req.dbErrorChan <- err
-		req.idChan <- -1
+		dbErrorChan <- err
+		idChan <- -1
 		return
 	}
 
 	id, err := res.LastInsertId()
-	req.dbErrorChan <- err
-	req.idChan <- id
+	dbErrorChan <- err
+	idChan <- id
 }

@@ -7,18 +7,20 @@ import (
 
 type token int
 
-type tokenChanMap struct {
+// TokenChanMap manages tokens associated with channels
+type TokenChanMap struct {
 	mu sync.RWMutex
 	m  map[token]chan struct{}
 }
 
-func newTokenChanMap() *tokenChanMap {
-	return &tokenChanMap{
+// NewTokenChanMap creates a new TokenChanMap
+func NewTokenChanMap() *TokenChanMap {
+	return &TokenChanMap{
 		m: map[token]chan struct{}{},
 	}
 }
 
-func (m *tokenChanMap) newToken() (token, <-chan struct{}) {
+func (m *TokenChanMap) newToken() (token, <-chan struct{}) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -34,7 +36,7 @@ func (m *tokenChanMap) newToken() (token, <-chan struct{}) {
 	}
 }
 
-func (m *tokenChanMap) close(tok token) {
+func (m *TokenChanMap) close(tok token) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -42,7 +44,7 @@ func (m *tokenChanMap) close(tok token) {
 	delete(m.m, tok)
 }
 
-func (m *tokenChanMap) notify() {
+func (m *TokenChanMap) notify() {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 

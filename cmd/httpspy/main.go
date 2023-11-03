@@ -4,6 +4,5 @@ package main
 import "www.github.com/spirozh/httpspy"
 
 func main() {
-	addr := ":6969"
-	httpspy.Main(addr)
+	httpspy.New(":6969").Run()
 }
