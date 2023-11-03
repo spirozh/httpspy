@@ -15,7 +15,8 @@ import (
 	"time"
 )
 
-func Main() {
+// Main is the entry to the app
+func Main(addr string) {
 	serverCtx, serverDone := context.WithCancel(context.Background())
 	mux := http.NewServeMux()
 
@@ -152,7 +153,6 @@ func Main() {
 	}
 	fmt.Println(len(requests), " request(s) stored.")
 
-	addr := ":6969"
 	fmt.Printf("--\naddr: %q\n", addr)
 
 	s := http.Server{
