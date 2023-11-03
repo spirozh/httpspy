@@ -4,9 +4,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -15,42 +13,19 @@ import (
 	"os/signal"
 	"strings"
 	"time"
-
-	_ "embed"
-
-	_ "github.com/mattn/go-sqlite3"
 )
-
-// DbName is the name of sqlite database file
-const DbName = "./httpspy.db"
-
-//go:embed "watch.html"
-var watchPage []byte
-
-//go:embed "watch.js"
-var watchJs []byte
-
-//go:embed "watch.css"
-var watchCSS []byte
 
 func main() {
 	serverCtx, serverDone := context.WithCancel(context.Background())
 	mux := http.NewServeMux()
 
-	ensureDB()
-
 	// open database
-	db, err := sql.Open("sqlite3", DbName)
-	if err != nil {
-		panic(err)
-	}
+	db := openDb()
 	defer db.Close()
 
 	updateListeners := newTokenChanMap()
 
-	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	})
+	mux.HandleFunc("/favicon.ico", staticHandler(watchFavicon, "image/x-icon"))
 	mux.HandleFunc("/watch", staticHandler(watchPage, "text/html"))
 	mux.HandleFunc("/watch.js", staticHandler(watchJs, "text/javascript"))
 	mux.HandleFunc("/watch.css", staticHandler(watchCSS, "text/css"))
@@ -177,7 +152,7 @@ func main() {
 	}
 	fmt.Println(len(requests), " request(s) stored.")
 
-	addr := ":6969"
+	addr := ":6968"
 	fmt.Printf("--\naddr: %q\n", addr)
 
 	s := http.Server{
@@ -202,67 +177,6 @@ func main() {
 	ctx, ctxCancel := context.WithTimeout(context.Background(), time.Second)
 	defer ctxCancel()
 	s.Shutdown(ctx)
-}
-
-func ensureDB() {
-	// if database doesn't exist, create it
-	if _, err := os.Stat(DbName); os.IsNotExist(err) {
-		db, err := sql.Open("sqlite3", DbName)
-		if err != nil {
-			panic(err)
-		}
-		defer db.Close()
-
-		// create tables
-		_, err = db.Exec(`
-		create table requests (
-			id        integer not null primary key,
-			method    text,
-			url       text,
-			headers   text,
-			body      text,
-			timestamp datetime
-		)
-	`)
-		if err != nil {
-			panic(err)
-		}
-	}
-}
-
-func getRequests(db *sql.DB, url string) (requests []Request, err error) {
-	rows, err := db.Query(`
-		select id, method, url, headers, body, timestamp from requests where ''=$1 or url=$1 order by timestamp desc
-	`, url)
-	if err != nil {
-		return requests, err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var r Request
-
-		rowErr := rows.Scan(&r.ID, &r.Method, &r.URL, &r.Headers, &r.Body, &r.Timestamp)
-		err = errors.Join(err, rowErr)
-
-		requests = append(requests, r)
-	}
-	return requests, err
-}
-
-func writeRequest(db *sql.DB, req *Request) {
-	res, err := db.Exec(`
-		insert into requests(method, url, headers, body, timestamp) values ($1, $2, $3, $4, $5) returning id
-	`, req.Method, req.URL, req.Headers, req.Body, req.Timestamp)
-	if err != nil {
-		req.dbErrorChan <- err
-		req.idChan <- -1
-		return
-	}
-
-	id, err := res.LastInsertId()
-	req.dbErrorChan <- err
-	req.idChan <- id
 }
 
 func staticHandler(body []byte, contentType string) http.HandlerFunc {
