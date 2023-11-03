@@ -17,10 +17,10 @@ import (
 func ServeMux(serverCtx context.Context, db DB) http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/favicon.ico", staticHandler(static.WatchFavicon, "image/x-icon"))
-	mux.HandleFunc("/watch", staticHandler(static.WatchPage, "text/html"))
-	mux.HandleFunc("/watch.js", staticHandler(static.WatchJS, "text/javascript"))
-	mux.HandleFunc("/watch.css", staticHandler(static.WatchCSS, "text/css"))
+	mux.Handle("/favicon.ico", staticHandler(static.WatchFavicon, "image/x-icon"))
+	mux.Handle("/watch", staticHandler(static.WatchPage, "text/html"))
+	mux.Handle("/watch.js", staticHandler(static.WatchJS, "text/javascript"))
+	mux.Handle("/watch.css", staticHandler(static.WatchCSS, "text/css"))
 
 	requests, err := db.GetRequests("")
 	if err != nil {
@@ -30,11 +30,10 @@ func ServeMux(serverCtx context.Context, db DB) http.Handler {
 
 	updateListeners := NewTokenChanMap()
 
-	mux.HandleFunc("/SSEUpdate", sseHandler(serverCtx, updateListeners))
-	mux.HandleFunc("/requests", requestHandler(db))
-	mux.HandleFunc("/clear", clearHandler(db, updateListeners))
-
-	mux.HandleFunc("/", everythingElseHandler(serverCtx, db, updateListeners))
+	mux.Handle("/SSEUpdate", sseHandler(serverCtx, updateListeners))
+	mux.Handle("/requests", requestHandler(db))
+	mux.Handle("/clear", clearHandler(db, updateListeners))
+	mux.Handle("/", everythingElseHandler(serverCtx, db, updateListeners))
 
 	return mux
 }
@@ -113,15 +112,15 @@ func clearHandler(db DB, updateListeners *TokenChanMap) http.HandlerFunc {
 	}
 }
 
-type writeHTTPRequest struct {
-	req   *Request
-	idCh  chan<- int64
-	errCh chan<- error
-}
-
 func everythingElseHandler(serverCtx context.Context, db DB, updateListeners *TokenChanMap) http.HandlerFunc {
+	type requestToRunner struct {
+		req   Request
+		idCh  chan<- int64
+		errCh chan<- error
+	}
+
 	// request writer (with plenty of room to grow)
-	writeCh := make(chan *writeHTTPRequest, 1000)
+	writeCh := make(chan *requestToRunner, 1000)
 
 	// write requests from a single thread (required by sqlite)
 	go func() {
@@ -129,7 +128,9 @@ func everythingElseHandler(serverCtx context.Context, db DB, updateListeners *To
 		for !done {
 			select {
 			case req := <-writeCh:
-				db.WriteRequest(req.req, req.errCh, req.idCh)
+				id, err := db.WriteRequest(req.req)
+				req.idCh <- id
+				req.errCh <- err
 				updateListeners.notify()
 			case <-serverCtx.Done():
 				done = true
@@ -147,20 +148,18 @@ func everythingElseHandler(serverCtx context.Context, db DB, updateListeners *To
 		var body strings.Builder
 		io.Copy(&body, r.Body)
 
-		req := &Request{
-			Timestamp:   time.Now().UTC(),
-			Method:      r.Method,
-			URL:         r.URL.String(),
-			Headers:     string(headers),
-			Body:        body.String(),
-			idChan:      make(chan int64, 1),
-			dbErrorChan: make(chan error, 1),
+		req := Request{
+			Timestamp: time.Now().UTC(),
+			Method:    r.Method,
+			URL:       r.URL.String(),
+			Headers:   string(headers),
+			Body:      body.String(),
 		}
 
-		// write request to db (and get id+errs back on channels)
+		// write request to db writing thread (and get id+errs back on channels)
 		idChan := make(chan int64, 1)
 		errChan := make(chan error, 1)
-		writeCh <- &writeHTTPRequest{req, idChan, errChan}
+		writeCh <- &requestToRunner{req, idChan, errChan}
 
 		if err := <-errChan; err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
