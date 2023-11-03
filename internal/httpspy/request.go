@@ -13,9 +13,6 @@ type Request struct {
 	URL       string
 	Headers   string
 	Body      string
-
-	idChan      chan int64
-	dbErrorChan chan error
 }
 
 func (r Request) String() string {
