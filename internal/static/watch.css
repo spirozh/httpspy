@@ -5,6 +5,7 @@ table {
     border-width: 1px;
     border-style: inset;
     border-color: black;
+    border-collapse: collapse;
 }
 
 #requests td, #requests th { border: 1px solid; }
@@ -12,31 +13,3 @@ table {
 .no-requests {
     text-align: center;
 }
-
-.clickable * {
-    cursor: pointer;
-    text-decoration: underline;
-    color: blue;
-}
-
-.tt {
-    padding: 5px;
-}
-.tt .ttt {
-    visibility: hidden;
-    width: 120px;
-    background-color: black;
-    color: #fff;
-    text-align: center;
-    padding: 5px 0;
-    border-radius: 6px;
-
-    /* Position the tooltip text - see examples below! */
-    position: absolute;
-    z-index: 1;
-  }
-
-  /* Show the tooltip text when you mouse over the tooltip container */
-  .tt:hover .ttt {
-    visibility: visible;
-  }

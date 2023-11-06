@@ -2,8 +2,12 @@
 package notification
 
 import (
+	"encoding/json"
+	"fmt"
 	"math/rand"
 	"sync"
+
+	"www.github.com/spirozh/httpspy/internal/data"
 )
 
 // Token is returned with a notification channel, so that the channel can be closed.
@@ -13,19 +17,18 @@ type Token int
 type Nothing struct{}
 
 var mu sync.RWMutex
-var tokenMap map[Token]chan Nothing
+var tokenMap map[Token]chan data.SSEEvent
 
 // New returns a new notification channel and a token that can be used to close it.
-func New() (<-chan Nothing, Token) {
+func New() (<-chan data.SSEEvent, Token) {
 	mu.Lock()
 	defer mu.Unlock()
 
 	if tokenMap == nil {
-		tokenMap = map[Token]chan Nothing{}
+		tokenMap = map[Token]chan data.SSEEvent{}
 	}
 
-	ch := make(chan Nothing, 1)
-	ch <- Nothing{}
+	ch := make(chan data.SSEEvent, 1)
 
 	for {
 		tok := Token(rand.Int())
@@ -48,12 +51,33 @@ func Close(tok Token) {
 	}
 }
 
-// Notify sends something to all open notification channels
-func Notify() {
+// NotifyClear sends a clear to all open notification channels
+func NotifyClear() {
+	sse := data.SSEEvent{
+		Event: "clear",
+		Data:  []byte("[]"),
+	}
+	notify(sse)
+}
+
+// NotifyNew sends a new request to all open notification channels
+func NotifyNew(request data.Request) {
+	fmt.Println("request: ", request)
+	marshalledRequest, _ := json.Marshal(request)
+	fmt.Printf("marshalled request: %s\n", marshalledRequest)
+	sse := data.SSEEvent{
+		Event: "new",
+		Data:  marshalledRequest,
+	}
+
+	notify(sse)
+}
+
+func notify(sse data.SSEEvent) {
 	mu.RLock()
 	defer mu.RUnlock()
 
 	for _, ch := range tokenMap {
-		ch <- Nothing{}
+		ch <- sse
 	}
 }

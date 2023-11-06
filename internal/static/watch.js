@@ -1,61 +1,72 @@
+let qurl = '';
+let requests;
 
-const evtSource = new EventSource("/SSEUpdate");
+const sse = new EventSource('/SSEUpdate');
+sse.addEventListener('all', e => {
+    requests = JSON.parse(e.data)
+    updateTable();
+});
+sse.addEventListener('new', e => {
+    let newR = JSON.parse(e.data);
+    requests.push(newR);
 
-let qurl = "";
+    if (qurl === '' || qurl === newR.URL){
+        updateTable();
+    }
+});
+sse.addEventListener('clear', e => {
+    requests = JSON.parse(e.data);
+    updateTable();
+});
 
-evtSource.onmessage = (event) => {
-    refreshRequests();
+function updateTable() {
+    updateURLHeader();
+    updateTBody();
 }
 
-function changeTable(requestsBody) {
-    requests = JSON.parse(requestsBody);
+qurl = '';
+function updateURLHeader() {
+    let elt = $('#URLHeader');
+    elt.empty()
+    if (qurl === '') {
+        elt.append($('<div>URL</div>'))
+    } else {
+        elt.append($('<a href onclick="qurl=\'\'; updateTable(); return false;">URL</a>'))
+    }
+}
 
-    var fragment = $('<table></table>');
+function updateTBody() {
+    var fragment = $('<tbody id="tableBody"></tbody>');
 
-    const cols = ['Id', 'Timestamp', 'Method', 'URL', 'Body'];
+    const cols = ['ID', 'Timestamp', 'Method', 'URL', 'Body'];
 
-    var tr = $(`<tr></tr>`);
-    cols.forEach(col => {
-        let th = $(`<th></th>`);
-        let div = $(`<div>${col}</div>`)
-        if (col === 'URL') {
-            if (qurl !== '') {
-                th = $(`<th class="clickable"></th>`);
-                th.on('click', () => { qurl = ""; refreshRequests(); });
-            }
-        }
-        th.append(div);
-        tr.append(th);
-    });
-    fragment.append(tr);
-
-    if (!requests) {
+    if (requests.length === 0) {
         fragment.append($(`<tr><td colspan="${cols.length}"><div class="no-requests">no requests</div></td></tr>`))
     } else
-        requests.forEach(r => {
+        requests.toReversed().filter( r => qurl === '' || qurl === r.URL ).forEach(r => {
             var tr = $('<tr></tr>');
             cols.forEach(col => tr.append(renderCell(r, col)));
             fragment.append(tr);
         });
 
-    $('div#requests table').remove();
-    $('div#requests').append(fragment);
+    let elt = $('#tableBody');
+    elt.replaceWith(fragment);
 }
 
 function renderCell(request, col) {
     let td = $(`<td class="${col}"></td>`);
     let div = $(`<div></div>`);
 
-    let text = "";
+    let text = request[col];
     switch (col) {
         case 'Timestamp':
-            text = request[col].replace('T', ' ');
+            text = text.replace('T', ' ');
             break;
         case 'URL':
             if (qurl === "") {
-                td.on('click', () => { qurl = request[col]; refreshRequests() });
-                td.attr('class', (i, v) => `${v} clickable`);
+                text = $(`<a href onclick="qurl='${text}'; updateTable(); return false;">${text}</a>`);
             }
+            break;
         default:
             text = request[col];
     }
@@ -63,10 +74,6 @@ function renderCell(request, col) {
 
     td.append(div);
     return td;
-}
-
-function refreshRequests() {
-    $.get('/requests?url=' + encodeURIComponent(qurl), changeTable);
 }
 
 $("button#clear").click(() => {

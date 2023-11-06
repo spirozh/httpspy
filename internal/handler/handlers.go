@@ -32,16 +32,11 @@ func New(serverCtx context.Context, doneChan chan struct{}) http.Handler {
 		database.Close()
 		close(doneChan)
 	}()
-	requests, err := database.GetRequests("")
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println(len(requests), " request(s) stored.")
+	fmt.Println(len(database.GetRequests()), " request(s) stored.")
 
-	mux.Handle("/SSEUpdate", sseHandler(serverCtx))
-	mux.Handle("/requests", requestHandler(database))
-	mux.Handle("/clear", clearHandler(database))
-	mux.Handle("/", everythingElseHandler(serverCtx, database))
+	mux.Handle("/SSEUpdate", sseHandler(serverCtx, &database))
+	mux.Handle("/clear", clearHandler(&database))
+	mux.Handle("/", everythingElseHandler(serverCtx, &database))
 
 	return mux
 }
@@ -54,7 +49,12 @@ func staticHandler(body []byte, contentType string) http.HandlerFunc {
 	}
 }
 
-func sseHandler(serverCtx context.Context) http.HandlerFunc {
+type SSEEvent struct {
+	Event string
+	Data  []byte
+}
+
+func sseHandler(serverCtx context.Context, db *db.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		updateCh, tok := notification.New()
 		defer notification.Close(tok)
@@ -66,10 +66,26 @@ func sseHandler(serverCtx context.Context) http.HandlerFunc {
 
 		requestCtx := r.Context()
 
+		requests := db.GetRequests()
+		data, err := json.Marshal(requests)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Fprintf(w, "event: all\ndata: %s\n\n", data)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+
 		for {
 			select {
-			case <-updateCh:
-				fmt.Fprint(w, "data: updated\n\n")
+			case sseEvent := <-updateCh:
+				if sseEvent.Event != "" {
+					fmt.Fprintf(w, "event: %s\n", sseEvent.Event)
+				}
+				if sseEvent.Data != nil {
+					fmt.Fprintf(w, "data: %s\n", sseEvent.Data)
+				}
+				fmt.Fprintln(w)
 
 				if flusher, ok := w.(http.Flusher); ok {
 					flusher.Flush()
@@ -83,31 +99,7 @@ func sseHandler(serverCtx context.Context) http.HandlerFunc {
 	}
 }
 
-func requestHandler(db db.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// show requests
-		reqs, err := db.GetRequests(r.URL.Query().Get("url"))
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprintln(w, err)
-			return
-		}
-
-		if reqs == nil {
-			reqs = []data.Request{}
-		}
-		b, err := json.MarshalIndent(reqs, "", " ")
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprintln(w, err)
-			return
-		}
-
-		fmt.Fprintln(w, string(b))
-	}
-}
-
-func clearHandler(db db.DB) http.HandlerFunc {
+func clearHandler(db *db.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		err := db.DeleteRequests()
 		if err != nil {
@@ -116,19 +108,16 @@ func clearHandler(db db.DB) http.HandlerFunc {
 			return
 		}
 
-		go notification.Notify()
+		fmt.Fprintln(w, "cleared")
+
+		go notification.NotifyClear()
 	}
 }
 
-func everythingElseHandler(serverCtx context.Context, db db.DB) http.HandlerFunc {
-	type requestToRunner struct {
-		req   data.Request
-		idCh  chan<- int64
-		errCh chan<- error
-	}
+func everythingElseHandler(serverCtx context.Context, db *db.DB) http.HandlerFunc {
 
 	// request writer (with plenty of room to grow)
-	writeCh := make(chan *requestToRunner, 1000)
+	writeCh := make(chan data.Request, 1000)
 
 	// write requests from a single thread (required by sqlite)
 	go func() {
@@ -136,10 +125,11 @@ func everythingElseHandler(serverCtx context.Context, db db.DB) http.HandlerFunc
 		for !done {
 			select {
 			case req := <-writeCh:
-				id, err := db.WriteRequest(req.req)
-				req.idCh <- id
-				req.errCh <- err
-				go notification.Notify()
+				err := db.WriteRequest(&req)
+				if err != nil {
+					panic("failed to write")
+				}
+				notification.NotifyNew(req)
 			case <-serverCtx.Done():
 				done = true
 			}
@@ -156,6 +146,9 @@ func everythingElseHandler(serverCtx context.Context, db db.DB) http.HandlerFunc
 		var body strings.Builder
 		io.Copy(&body, r.Body)
 
+		reqCh, token := notification.New()
+		defer notification.Close(token)
+
 		req := data.Request{
 			Timestamp: time.Now().UTC(),
 			Method:    r.Method,
@@ -164,24 +157,14 @@ func everythingElseHandler(serverCtx context.Context, db db.DB) http.HandlerFunc
 			Body:      body.String(),
 		}
 
-		// write request to db writing thread (and get id+errs back on channels)
-		idChan := make(chan int64, 1)
-		errChan := make(chan error, 1)
-		writeCh <- &requestToRunner{req, idChan, errChan}
+		// write request to db writing thread (and get request with id back on channel)
+		writeCh <- req
 
-		if err := <-errChan; err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprintln(w, err)
-			return
-		}
-
-		req.ID = <-idChan
-		reqBytes, err := json.MarshalIndent(req, "", "  ")
-		if err != nil {
-			panic(err)
-		}
+		// wait for request to come back
+		reqs := <-reqCh
 
 		w.Header().Add("Content-Type", "application/json")
-		io.Copy(w, bytes.NewReader(reqBytes))
+		io.Copy(w, bytes.NewReader(reqs.Data))
+		fmt.Fprintln(w)
 	}
 }
