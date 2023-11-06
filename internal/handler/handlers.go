@@ -49,11 +49,6 @@ func staticHandler(body []byte, contentType string) http.HandlerFunc {
 	}
 }
 
-type SSEEvent struct {
-	Event string
-	Data  []byte
-}
-
 func sseHandler(serverCtx context.Context, db *db.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		updateCh, tok := notification.New()
