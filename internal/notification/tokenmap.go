@@ -3,7 +3,6 @@ package notification
 
 import (
 	"encoding/json"
-	"fmt"
 	"math/rand"
 	"sync"
 
@@ -62,9 +61,7 @@ func NotifyClear() {
 
 // NotifyNew sends a new request to all open notification channels
 func NotifyNew(request data.Request) {
-	fmt.Println("request: ", request)
 	marshalledRequest, _ := json.Marshal(request)
-	fmt.Printf("marshalled request: %s\n", marshalledRequest)
 	sse := data.SSEEvent{
 		Event: "new",
 		Data:  marshalledRequest,
