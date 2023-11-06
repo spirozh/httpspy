@@ -14,8 +14,3 @@ type Request struct {
 	Headers   string
 	Body      string
 }
-
-type SSEEvent struct {
-	Event string
-	Data  []byte
-}
